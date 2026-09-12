@@ -1,7 +1,9 @@
 # Entry point: webcam -> MediaPipe hand tracking -> gesture control -> Double Motor.
 #
-# Left hand = throttle (shape-based), right hand = turning (position-based).
-# See README.md "Pose-Controlled Maze Race" section for the full design.
+# Single hand controls both throttle (shape) and turning (horizontal
+# position): open hand = forward, fist = backward. Seeing both hands at once
+# is a safety stop override. See README.md "Pose-Controlled Maze Race" for
+# the full design.
 
 import os
 import time
@@ -14,7 +16,7 @@ from mediapipe.tasks.python import BaseOptions
 from mediapipe.tasks.python import vision
 
 from src.control import Debouncer, mix
-from src.gestures import BEND_OFFSET, PIVOT_OFFSET, classify_throttle_hand, classify_turn_hand
+from src.gestures import WRIST, classify_hand_shape, turn_from_offset
 
 # --- MediaPipe hand landmark model setup ---
 MODEL_PATH = os.path.join(os.path.dirname(__file__), 'models', 'hand_landmarker.task')
@@ -49,51 +51,29 @@ options = vision.HandLandmarkerOptions(
 )
 
 
-def split_hands(result):
-	"""Return (left_landmarks, right_landmarks); either may be None.
-
-	Handedness assumes a mirrored/selfie-style input, which is why the frame
-	is flipped before detection below.
-	"""
-	left = right = None
-	for landmarks, handedness in zip(result.hand_landmarks, result.handedness):
-		label = handedness[0].category_name
-		if label == 'Left':
-			left = landmarks
-		elif label == 'Right':
-			right = landmarks
-	return left, right
-
-
-def draw_turn_zones(frame):
-	"""Draw boxes over the turn thresholds so the driver can see them live."""
+def draw_turn_indicator(frame, hand_x=None):
+	"""Draw a center reference line, plus the hand's live offset if visible."""
 	h, w = frame.shape[:2]
-	zones = [
-		(0.0, 0.5 - PIVOT_OFFSET, 'PIVOT L', (0, 0, 255)),
-		(0.5 - PIVOT_OFFSET, 0.5 - BEND_OFFSET, 'BEND L', (0, 165, 255)),
-		(0.5 - BEND_OFFSET, 0.5 + BEND_OFFSET, 'STRAIGHT', (0, 255, 0)),
-		(0.5 + BEND_OFFSET, 0.5 + PIVOT_OFFSET, 'BEND R', (0, 165, 255)),
-		(0.5 + PIVOT_OFFSET, 1.0, 'PIVOT R', (0, 0, 255)),
-	]
-	for start, end, label, color in zones:
-		x1, x2 = int(start * w), int(end * w)
-		cv2.rectangle(frame, (x1, 0), (x2, h), color, 2)
-		cv2.putText(frame, label, (x1 + 5, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+	cx = w // 2
+	cv2.line(frame, (cx, 0), (cx, h), (200, 200, 200), 1)
+	if hand_x is not None:
+		hx = int(hand_x * w)
+		cv2.line(frame, (cx, h // 2), (hx, h // 2), (0, 255, 255), 3)
 
 
 cap = cv2.VideoCapture(0)
 throttle_debouncer = Debouncer()
-turn_debouncer = Debouncer()
 
 try:
 	with vision.HandLandmarker.create_from_options(options) as landmarker:
-		print("Left hand = throttle, right hand = turn. Press 'q' to quit.")
+		print("One hand: open = forward, fist = backward, position = turn.")
+		print("Both hands visible = stop. Press 'q' to quit.")
 		while cap.isOpened():
 			ok, frame = cap.read()
 			if not ok:
 				break
 
-			frame = cv2.flip(frame, 1)  # mirror view; matches handedness convention
+			frame = cv2.flip(frame, 1)  # mirror view, so on-screen left/right match turning
 			rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 			mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
 			timestamp_ms = int(time.time() * 1000)
@@ -102,18 +82,24 @@ try:
 			for landmarks in result.hand_landmarks:
 				vision.drawing_utils.draw_landmarks(frame, landmarks, HAND_CONNECTIONS)
 
-			left_landmarks, right_landmarks = split_hands(result)
-			throttle_raw = classify_throttle_hand(left_landmarks) if left_landmarks else None
-			turn_raw = classify_turn_hand(right_landmarks) if right_landmarks else None
+			if len(result.hand_landmarks) == 1:
+				landmarks = result.hand_landmarks[0]
+				throttle_raw = classify_hand_shape(landmarks)
+				turn_value = turn_from_offset(landmarks)
+				hand_x = landmarks[WRIST].x
+			else:
+				# Zero hands (fail-safe) or both hands (safety stop override).
+				throttle_raw = None
+				turn_value = 0.0
+				hand_x = None
 
 			throttle_label = throttle_debouncer.update(throttle_raw)
-			turn_label = turn_debouncer.update(turn_raw)
 
-			speed_left, speed_right = mix(throttle_label, turn_label)
+			speed_left, speed_right = mix(throttle_label, turn_value)
 			doublemotor.movement_move_tank(speed_left, speed_right, blocking=False)
 
-			draw_turn_zones(frame)
-			status = f'throttle={throttle_label} turn={turn_label}  L={speed_left} R={speed_right}'
+			draw_turn_indicator(frame, hand_x)
+			status = f'throttle={throttle_label} turn={turn_value:.0f}  L={speed_left} R={speed_right}'
 			cv2.putText(frame, status, (10, frame.shape[0] - 15),
 						cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 			cv2.imshow('Pose Race Control', frame)

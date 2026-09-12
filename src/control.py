@@ -1,18 +1,9 @@
-"""Gesture labels -> motor commands. Pure logic, no camera/hardware deps."""
+"""Gesture signals -> motor commands. Pure logic, no camera/hardware deps."""
 
 # Speed percentages fed into the differential-drive mixing formula.
 THROTTLE_VALUES = {
 	'forward': 40,
-	'stop': 0,
 	'backward': -40,
-}
-
-TURN_VALUES = {
-	'pivot_left': -40,
-	'bend_left': -15,
-	'straight': 0,
-	'bend_right': 15,
-	'pivot_right': 40,
 }
 
 # Consecutive frames a gesture must hold before it's accepted as the new state.
@@ -41,15 +32,16 @@ class Debouncer:
 		return self._current
 
 
-def mix(throttle_label, turn_label):
-	"""Combine throttle + turn gesture labels into (speed_left, speed_right).
+def mix(throttle_label, turn_value):
+	"""Combine throttle label + continuous turn value into (speed_left, speed_right).
 
-	Unrecognized labels (hand not detected, ambiguous shape, debounce not yet
-	settled) default to 0, so the fail-safe behavior is to stop.
+	An unrecognized throttle label (no hand, both hands, ambiguous shape,
+	debounce not yet settled) defaults to 0, so the fail-safe behavior is to
+	stop. Turn is independent of throttle - it's live off hand position
+	whenever exactly one hand is visible, 0 otherwise.
 	"""
 	throttle = THROTTLE_VALUES.get(throttle_label, 0)
-	turn = TURN_VALUES.get(turn_label, 0)
 
-	speed_left = max(-100, min(100, throttle + turn))
-	speed_right = max(-100, min(100, throttle - turn))
+	speed_left = max(-100, min(100, throttle + turn_value))
+	speed_right = max(-100, min(100, throttle - turn_value))
 	return speed_left, speed_right

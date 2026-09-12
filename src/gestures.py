@@ -22,11 +22,15 @@ FINGER_JOINTS = (
 # farther from the wrist than its own knuckle (MCP) is.
 EXTENDED_RATIO = 1.3
 
+# Turn stays 0 (straight) while the wrist is within this offset of frame
+# center, so small hand jitter doesn't cause a phantom turn.
+TURN_DEADZONE = 0.12
+
 # Turn speed maxes out once the wrist is this far (normalized, 0-0.5) from
-# frame center; scaled linearly in between.
+# frame center; scaled linearly between the deadzone and this edge.
 TURN_EDGE_OFFSET = 0.4
 TURN_MAX = 40
-TURN_GAIN = TURN_MAX / TURN_EDGE_OFFSET
+TURN_GAIN = TURN_MAX / (TURN_EDGE_OFFSET - TURN_DEADZONE)
 
 
 def _dist(a, b):
@@ -57,8 +61,11 @@ def turn_from_offset(landmarks):
 	"""Continuous turn speed from the hand's horizontal offset from center.
 
 	Offset is measured from the wrist, since it stays stable regardless of
-	hand shape (open vs. fist). Positive = right, negative = left.
+	hand shape (open vs. fist). Positive = right, negative = left. Offsets
+	within TURN_DEADZONE of center are flattened to 0 (straight buffer).
 	"""
 	offset = landmarks[WRIST].x - 0.5
-	turn = offset * TURN_GAIN
+	sign = 1 if offset >= 0 else -1
+	magnitude = max(0.0, abs(offset) - TURN_DEADZONE)
+	turn = sign * magnitude * TURN_GAIN
 	return max(-TURN_MAX, min(TURN_MAX, turn))

@@ -17,7 +17,7 @@ from mediapipe.tasks.python import BaseOptions
 from mediapipe.tasks.python import vision
 
 from src.control import Debouncer, mix
-from src.gestures import WRIST, classify_hand_shape, turn_from_offset
+from src.gestures import TURN_DEADZONE, WRIST, classify_hand_shape, turn_from_offset
 
 # --- MediaPipe hand landmark model setup ---
 MODEL_PATH = os.path.join(os.path.dirname(__file__), 'models', 'hand_landmarker.task')
@@ -62,9 +62,11 @@ options = vision.HandLandmarkerOptions(
 
 
 def draw_turn_indicator(frame, hand_x=None):
-	"""Draw a center reference line, plus the hand's live offset if visible."""
+	"""Draw the straight-buffer zone and center line, plus the hand's live offset."""
 	h, w = frame.shape[:2]
 	cx = w // 2
+	deadzone_px = int(TURN_DEADZONE * w)
+	cv2.rectangle(frame, (cx - deadzone_px, 0), (cx + deadzone_px, h), (0, 255, 0), 1)
 	cv2.line(frame, (cx, 0), (cx, h), (200, 200, 200), 1)
 	if hand_x is not None:
 		hx = int(hand_x * w)

@@ -5,6 +5,7 @@
 # is a safety stop override. See README.md "Pose-Controlled Maze Race" for
 # the full design.
 
+import argparse
 import os
 import time
 import urllib.request
@@ -32,17 +33,26 @@ if not os.path.exists(MODEL_PATH):
 
 HAND_CONNECTIONS = vision.HandLandmarksConnections.HAND_CONNECTIONS
 
+parser = argparse.ArgumentParser(description='Pose-controlled maze race.')
+parser.add_argument(
+	'--dry-run', action='store_true',
+	help='Skip the Double Motor connection; show computed speeds on-screen instead of sending them.',
+)
+args = parser.parse_args()
+
 # update these values to match the Connection Card
 card_color = le.LEGO_COLOR_PURPLE
 card_serial = '1227'
 
-# Connect to the Double Motor
-doublemotor = le.DoubleMotor()
-doublemotor.connect(card_color=card_color, card_serial=card_serial)
+# Connect to the Double Motor (skipped in --dry-run, e.g. no hardware on hand)
+doublemotor = None
+if not args.dry_run:
+	doublemotor = le.DoubleMotor()
+	doublemotor.connect(card_color=card_color, card_serial=card_serial)
 
-if not doublemotor.connected:
-	print('Error connecting to Double Motor.')
-	exit(1)  # error connecting
+	if not doublemotor.connected:
+		print('Error connecting to Double Motor.')
+		exit(1)  # error connecting
 
 options = vision.HandLandmarkerOptions(
 	base_options=BaseOptions(model_asset_path=MODEL_PATH),
@@ -96,10 +106,13 @@ try:
 			throttle_label = throttle_debouncer.update(throttle_raw)
 
 			speed_left, speed_right = mix(throttle_label, turn_value)
-			doublemotor.movement_move_tank(speed_left, speed_right, blocking=False)
+			if doublemotor is not None:
+				doublemotor.movement_move_tank(speed_left, speed_right, blocking=False)
 
 			draw_turn_indicator(frame, hand_x)
 			status = f'throttle={throttle_label} turn={turn_value:.0f}  L={speed_left} R={speed_right}'
+			if args.dry_run:
+				status += '  [DRY RUN]'
 			cv2.putText(frame, status, (10, frame.shape[0] - 15),
 						cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 			cv2.imshow('Pose Race Control', frame)
@@ -107,9 +120,11 @@ try:
 			if cv2.waitKey(1) & 0xFF == ord('q'):
 				break
 finally:
-	doublemotor.movement_stop()
+	if doublemotor is not None:
+		doublemotor.movement_stop()
 	cap.release()
 	cv2.destroyAllWindows()
-	doublemotor.disconnect()
+	if doublemotor is not None:
+		doublemotor.disconnect()
 
 exit(0)  # successful execution

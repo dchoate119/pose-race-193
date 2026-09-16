@@ -7,6 +7,11 @@ as the controller, instead of a physical remote. A webcam feed is processed
 with MediaPipe to read hand gestures/positions each frame, which are turned
 into motor commands sent over BLE via `legoeducation`.
 
+# Key files:
+1. main.py: drives car based on gestures
+2. control.py: Defines the control system
+3. gestures.py: Maps key points in hand in 2D space
+
 ### Stack
 - **OpenCV** - webcam capture, color conversion, on-screen debug overlay
 - **MediaPipe (Tasks API, `HandLandmarker`)** - per-frame hand landmark

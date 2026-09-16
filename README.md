@@ -18,11 +18,14 @@ into motor commands sent over BLE via `legoeducation`.
 ### Control Architecture
 - **Level-triggered, not edge-triggered**: every control tick, motor output is
   recomputed directly from whatever gesture is currently held. No "start"/"stop"
-  events to track - if no hand is detected or the gesture is ambiguous, the
-  fail-safe default is stop.
-- **Two hands, two independent roles**:
-  - **Left hand -> throttle** (shape-based gesture)
-  - **Right hand -> turning** (position-based, not shape-based)
+  events to track - if no hand is detected, throttle is 0, so the fail-safe
+  default is stop.
+- **Single hand, one signal drives throttle, another drives steering**:
+  - **How open the hand is -> throttle** (continuous, closed fist = 0%,
+    fully open = 100%)
+  - **Horizontal position -> turn direction/intensity** (position-based, not
+    shape-based)
+  - **A box at the bottom of frame -> reverse** (drop the hand low to back up)
 - **Differential drive mixing formula** combines both into wheel speeds each
   tick:
   ```
@@ -30,52 +33,47 @@ into motor commands sent over BLE via `legoeducation`.
   speed_right = throttle - turn
   ```
   sent via `movement_move_tank(speed_left, speed_right, blocking=False)`.
+  Turn is itself scaled by openness, so a closed fist always stops fully
+  instead of spinning in place in a turn zone.
 - Turn value's sign gives direction (left/right) and magnitude gives
   intensity - small offset from frame center = gradual bend, large offset =
   turn-on-a-dime pivot. Same formula produces both; no separate turn "modes."
-- **Debounce**: require a gesture to hold for several consecutive frames
+- **Debounce**: require a turn zone to hold for several consecutive frames
   before it's accepted as the new state, to avoid jitter from per-frame
   misclassification.
 
-### Gesture Vocabulary (v1)
+### Control Vocabulary (v2 - single hand)
 
-| Hand  | Role     | Signal type | Gesture         | Meaning                |
-|-------|----------|-------------|-----------------|------------------------|
-| Left  | Throttle | Shape       | Open hand       | Forward                |
-| Left  | Throttle | Shape       | Fist            | Neutral / stop         |
-| Left  | Throttle | Shape       | Thumbs-out      | Backward               |
-| Right | Turning  | Position    | Far left of center  | Pivot left         |
-| Right | Turning  | Position    | Slightly left of center | Bend left      |
-| Right | Turning  | Position    | Centered        | Straight                |
-| Right | Turning  | Position    | Slightly right of center | Bend right    |
-| Right | Turning  | Position    | Far right of center | Pivot right        |
+| Signal              | Type       | Value              | Meaning                    |
+|----------------------|------------|--------------------|-----------------------------|
+| Hand openness        | Shape      | Closed fist -> open | 0% -> 100% throttle        |
+| Horizontal position  | Position   | Far left of center | Pivot left                 |
+| Horizontal position  | Position   | Slightly left of center | Bend left              |
+| Horizontal position  | Position   | Centered            | Straight                   |
+| Horizontal position  | Position   | Slightly right of center | Bend right            |
+| Horizontal position  | Position   | Far right of center | Pivot right                |
+| Vertical position     | Position   | Below the backward box threshold | Reverse (openness still sets speed) |
 
-Future add-on (not v1): make throttle proportional to hand openness/raise
-height instead of a fixed discrete value.
-
-### Shape Classification Approach
-Open hand / fist / thumbs-out are distinguished using fingertip landmark
-positions relative to the palm/wrist:
-- **Extended vs. curled finger**: compare each fingertip landmark's distance
-  from the wrist (or its position relative to its own knuckle) - curled
-  fingers sit close to the palm, extended fingers sit far from it.
-- **Open hand**: all (or most) fingers extended.
-- **Fist**: all fingers curled.
-- **Thumbs-out**: thumb extended while the other four fingers are curled.
+### Openness Classification Approach
+Throttle is a continuous 0.0-1.0 value from fingertip landmark positions
+relative to the palm/wrist:
+- For each of the four fingers, compare the fingertip's distance from the
+  wrist to its own knuckle's distance from the wrist - curled fingers sit
+  close (ratio near 1), extended fingers sit far (ratio higher).
+- Average that ratio across the four fingers and linearly map it between a
+  closed-fist ratio and a fully-open ratio, clamped to [0, 1].
 
 ### Implementation Checklist
-- [ ] Hand shape classifier (open / fist / thumbs-out) from left-hand
-      landmarks using fingertip-to-wrist distance
-- [ ] Position-based turn signal from right-hand landmarks (offset from
-      frame center -> direction + intensity)
-- [ ] Debounce/hysteresis layer requiring N consecutive stable frames before
-      accepting a new gesture state
-- [ ] Differential drive mixing (`throttle`, `turn` -> `speed_left`,
-      `speed_right`)
-- [ ] Level-triggered control loop wired to `movement_move_tank()`
+- [x] Continuous openness -> throttle from hand landmarks (fingertip-to-wrist
+      distance ratio)
+- [x] Position-based turn zone from wrist landmarks (offset from frame
+      center -> direction + intensity)
+- [x] Backward box from wrist vertical position, independent of throttle
+- [x] Debounce/hysteresis layer requiring N consecutive stable frames before
+      accepting a new turn zone
+- [x] Differential drive mixing (`throttle`, `turn` -> `speed_left`,
+      `speed_right`), turn scaled by throttle so a closed fist fully stops
+- [x] Level-triggered control loop wired to `movement_move_tank()`
       (non-blocking) on the Double Motor
-- [ ] Fail-safe default to stop when a hand is not detected or gesture is
-      ambiguous
-- [ ] End-to-end test: drive forward/backward/pivot/bend live via hand
-      gestures
-- [ ] (Future) Proportional throttle from hand openness/raise height
+- [x] Fail-safe default to stop when a hand is not detected
+- [ ] End-to-end test: drive forward/backward/pivot/bend live via one hand
